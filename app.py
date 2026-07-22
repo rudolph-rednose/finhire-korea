@@ -124,6 +124,14 @@ def init_db():
           VALUES(?,?,?,?,?,1,'공식 공개 공고 피드 연결됨')
           ON CONFLICT(company_id,name) DO UPDATE SET source_type=excluded.source_type,endpoint=excluded.endpoint,
           config_json=excluded.config_json,enabled=1""", (company_id, source_name, "json_feed", endpoint, config))
+    # 하나은행의 현재 공고는 career.co.kr 기반 별도 채용관에서 운영된다.
+    hana_bank_id = con.execute("SELECT id FROM companies WHERE name='하나은행'").fetchone()[0]
+    hana_bank_url = "https://hanabankhr.career.co.kr/jobs/"
+    con.execute("UPDATE companies SET website=? WHERE id=?", (hana_bank_url, hana_bank_id))
+    con.execute("""UPDATE job_sources SET source_type='html',endpoint=?,
+      config_json='{"adapter":"hana_bank_career"}',enabled=1,
+      last_status='하나은행 신규 공식 채용 목록 연결됨'
+      WHERE company_id=? AND name='하나은행 채용'""", (hana_bank_url, hana_bank_id))
     # 뱅크샐러드는 공식 채용 사이트가 사용하는 공개 Greeting 공고 피드를 제공한다.
     banksalad_id = con.execute("SELECT id FROM companies WHERE name='뱅크샐러드'").fetchone()[0]
     con.execute("""UPDATE job_sources SET source_type='json_feed',
@@ -220,6 +228,13 @@ def fetch_text(url):
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (FinHire Korea official-job-index)"})
     with urllib.request.urlopen(request, timeout=18) as response:
         return response.read().decode("utf-8", "replace")
+
+def fetch_korean_legacy_text(url):
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (FinHire Korea official-job-index)"})
+    with urllib.request.urlopen(request, timeout=18) as response:
+        raw = response.read()
+    # career.co.kr의 구형 ASP 채용관은 EUC-KR로 서비스된다.
+    return raw.decode("euc-kr", "replace")
 
 def fetch_form_json(url, values):
     payload = urlencode(values).encode("utf-8")
@@ -416,6 +431,30 @@ def sync_source(source_id):
                 if not external or not title:
                     continue
                 records.append({"id":external, "title":title, "location":"경기 · 성남시", "url":f"https://recruit.naverfincorp.com/rcrt/view.do?rcrtNo={quote(external)}", "description":"네이버페이 공식 채용공고", "experience":"경력/신입 공고 상세 확인", "employment":"고용형태 확인", "posted_at":TODAY.isoformat()})
+        elif source["source_type"] == "html" and config.get("adapter") == "hana_bank_career":
+            page = fetch_korean_legacy_text(source["endpoint"])
+            records = []
+            for block in re.findall(r"<tr>(.*?)</tr>", page, re.S | re.I):
+                if "접수중" not in block:
+                    continue
+                link = re.search(r"jobs_view_m\.asp\?ID=(\d+)[^>]*>(.*?)</a>", block, re.S | re.I)
+                dates = re.findall(r"(\d{4}/\d{2}/\d{2})", block)
+                if not link or len(dates) < 2:
+                    continue
+                external = link.group(1)
+                title_html = re.sub(r"<span[^>]*display\s*:\s*none[^>]*>.*?</span>", "", link.group(2), flags=re.S | re.I)
+                title = html.unescape(re.sub(r"<[^>]+>", "", title_html)).strip()
+                deadline = dates[1].replace("/", "-")
+                if deadline < TODAY.isoformat():
+                    continue
+                records.append({
+                    "id": external, "title": title, "location": "대한민국",
+                    "url": f"https://hanabankhr.career.co.kr/jobs/jobs_view.asp?ID={external}",
+                    "description": "하나은행 공식 상시채용 공고",
+                    "experience": "경력/신입 공고 상세 확인",
+                    "employment": "고용형태 확인", "deadline": deadline,
+                    "posted_at": dates[0].replace("/", "-"),
+                })
         elif source["source_type"] == "json_feed" and config.get("adapter") == "shinhan_card":
             data = fetch_json(source["endpoint"])
             records = []
