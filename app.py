@@ -319,6 +319,23 @@ def normalize_category(raw_category, title):
     ]
     return next((group for group, words in groups if any(word in text for word in words)), "기타")
 
+def infer_employment(current, title, description=""):
+    """Infer employment only when the official feed did not provide a value."""
+    unknown = {"", "고용형태 확인", "상세 확인", "미정", None}
+    if current not in unknown:
+        return current
+    text = f"{title} {description}".lower()
+    patterns = [
+        ("인턴", ["체험형 인턴", "채용연계형 인턴", "인턴", "intern"]),
+        ("무기계약직", ["무기계약"]),
+        ("단기계약직", ["단기계약", "단기 계약"]),
+        ("계약직", ["기간제", "계약직", "계약 형태", "계약형태", "contract"]),
+        ("정규직", ["정규직", "정규 사원", "정규사원", "full-time", "full time"]),
+        ("파트타이머", ["파트타임", "아르바이트", "part-time", "part time"]),
+        ("임원", ["임원 채용", "임원급"]),
+    ]
+    return next((kind for kind, words in patterns if any(word in text for word in words)), "상세 확인")
+
 def sync_source(source_id):
     con = db(); source = con.execute("""SELECT s.*, c.name company FROM job_sources s JOIN companies c ON c.id=s.company_id WHERE s.id=?""", (source_id,)).fetchone()
     if not source: con.close(); raise ValueError("소스를 찾을 수 없습니다.")
@@ -463,12 +480,18 @@ def sync_source(source_id):
                 deadline = dates[1].replace("/", "-")
                 if deadline < TODAY.isoformat():
                     continue
+                detail_url = f"https://hanabankhr.career.co.kr/jobs/jobs_view.asp?ID={external}"
+                try:
+                    detail_page = fetch_korean_legacy_text(detail_url)
+                    detail_text = html.unescape(re.sub(r"<[^>]+>", " ", detail_page))
+                except Exception:
+                    detail_text = ""
                 records.append({
                     "id": external, "title": title, "location": "대한민국",
-                    "url": f"https://hanabankhr.career.co.kr/jobs/jobs_view.asp?ID={external}",
+                    "url": detail_url,
                     "description": "하나은행 공식 상시채용 공고",
                     "experience": "경력/신입 공고 상세 확인",
-                    "employment": "고용형태 확인", "deadline": deadline,
+                    "employment": infer_employment(None, title, detail_text), "deadline": deadline,
                     "posted_at": dates[0].replace("/", "-"),
                 })
         elif source["source_type"] == "json_feed" and config.get("adapter") == "shinhan_card":
@@ -489,7 +512,8 @@ def sync_source(source_id):
             title = item["title"]; location = item["location"]; url = item["url"]
             key = canonical(source["company"], title, location)
             category = normalize_category(item.get("category"), title)
-            values = (source["company_id"],source_id,str(item["id"]),title,title,category,item["experience"],location,item["employment"],item["description"],item.get("deadline"),item.get("posted_at", TODAY.isoformat()),url,key)
+            employment = infer_employment(item.get("employment"), title, item.get("description", ""))
+            values = (source["company_id"],source_id,str(item["id"]),title,title,category,item["experience"],location,employment,item["description"],item.get("deadline"),item.get("posted_at", TODAY.isoformat()),url,key)
             con.execute("""INSERT OR IGNORE INTO jobs(company_id,source_id,external_id,title,original_title,job_category,experience,location,employment_type,description,deadline,posted_at,source_url,canonical_key,status,last_seen_at)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'open', CURRENT_TIMESTAMP)""",
               values)
@@ -501,7 +525,7 @@ def sync_source(source_id):
                 con.execute("""INSERT OR IGNORE INTO jobs(company_id,source_id,external_id,title,original_title,job_category,experience,location,employment_type,description,deadline,posted_at,source_url,canonical_key,status,last_seen_at)
                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'open', CURRENT_TIMESTAMP)""", values[:-1] + (fallback_key,))
             con.execute("""UPDATE jobs SET title=?,original_title=?,job_category=?,experience=?,location=?,employment_type=?,description=?,deadline=?,posted_at=?,source_url=?,status='open',last_seen_at=CURRENT_TIMESTAMP
-              WHERE source_id=? AND external_id=?""", (title,title,category,item["experience"],location,item["employment"],item["description"],item.get("deadline"),item.get("posted_at", TODAY.isoformat()),url,source_id,str(item["id"])))
+              WHERE source_id=? AND external_id=?""", (title,title,category,item["experience"],location,employment,item["description"],item.get("deadline"),item.get("posted_at", TODAY.isoformat()),url,source_id,str(item["id"])))
             count += 1
         external_ids = [str(item["id"]) for item in records]
         if external_ids:
@@ -606,7 +630,7 @@ def home(qs, favorites_only=False):
     companies=[r['name'] for r in company_rows]
     active_condition = "status='open' AND (deadline IS NULL OR deadline >= date('now'))"
     cat=[r[0] for r in con.execute(f"SELECT DISTINCT job_category FROM jobs WHERE {active_condition} ORDER BY job_category")]
-    emp=[r[0] for r in con.execute(f"SELECT DISTINCT employment_type FROM jobs WHERE {active_condition} ORDER BY employment_type")]
+    emp=[r[0] for r in con.execute(f"SELECT DISTINCT employment_type FROM jobs WHERE {active_condition} AND employment_type NOT IN ('고용형태 확인','상세 확인','미정') ORDER BY employment_type")]
     raw_locations=[(r[0] or '').lower() for r in con.execute(f"SELECT DISTINCT location FROM jobs WHERE {active_condition}")]
     loc=[]
     if any('서울' in value or 'seoul' in value for value in raw_locations): loc.append('서울')

@@ -25,6 +25,12 @@ class JobflexFeedTests(unittest.TestCase):
         self.assertEqual("데이터/AI", app.normalize_category("ML", "AI Engineer"))
         self.assertEqual("영업/고객", app.normalize_category(None, "영업점 텔러"))
 
+    def test_employment_is_inferred_only_when_missing(self):
+        self.assertEqual("인턴", app.infer_employment("고용형태 확인", "체험형 인턴"))
+        self.assertEqual("계약직", app.infer_employment(None, "데이터 분석", "계약형태 : 기간제 계약직"))
+        self.assertEqual("정규직", app.infer_employment("정규직", "계약 관련 업무"))
+        self.assertEqual("상세 확인", app.infer_employment(None, "데이터 분석"))
+
     def test_location_filter_combines_korean_and_english_seoul(self):
         where, values = app.job_where({"location": ["서울"]})
         self.assertIn("lower(j.location) LIKE '%seoul%'", where)
