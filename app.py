@@ -326,7 +326,15 @@ def sync_source(source_id):
             except Exception:
                 modern = []
             known_ids = {str(item["id"]) for item in records}
-            known_titles = {re.sub(r"[^a-z0-9가-힣]", "", item["title"].lower()) for item in records}
+            records_by_title = {re.sub(r"[^a-z0-9가-힣]", "", item["title"].lower()): item for item in records}
+            # 같은 공고가 양쪽 피드에 있으면 외부 ID는 유지하되 링크와 메타
+            # 데이터는 실제로 동작하는 신형 상세 페이지 값으로 갱신한다.
+            for item in modern:
+                title_key = re.sub(r"[^a-z0-9가-힣]", "", item["title"].lower())
+                legacy = records_by_title.get(title_key)
+                if legacy:
+                    legacy.update({key: value for key, value in item.items() if key != "id"})
+            known_titles = set(records_by_title)
             records.extend(item for item in modern
                            if str(item["id"]) not in known_ids
                            and re.sub(r"[^a-z0-9가-힣]", "", item["title"].lower()) not in known_titles)
