@@ -233,11 +233,55 @@ def fetch_form_text(url, values):
     with urllib.request.urlopen(request, timeout=18) as response:
         return response.read().decode("utf-8", "replace")
 
-def fetch_post_json(url, values):
+def fetch_post_json(url, values, headers=None):
     payload = json.dumps(values).encode("utf-8")
-    request = urllib.request.Request(url, data=payload, headers={"User-Agent": "FinHireKorea/0.1 (official-job-index; contact: admin@example.com)", "Content-Type": "application/json"})
+    request_headers = {"User-Agent": "FinHireKorea/0.1 (official-job-index; contact: admin@example.com)", "Content-Type": "application/json"}
+    request_headers.update(headers or {})
+    request = urllib.request.Request(url, data=payload, headers=request_headers)
     with urllib.request.urlopen(request, timeout=18) as response:
         return json.loads(response.read().decode("utf-8"))
+
+def fetch_jobflex_records(base_url):
+    """Read the current Jobflex builder feed used by newer recruiter.co.kr sites.
+
+    The builder feed also retains closed announcements.  Only IN_SUBMISSION rows
+    whose explicit deadline has not passed are safe to expose as open jobs.
+    """
+    hostname = urlparse(base_url).netloc
+    payload = {
+        "pageableRq": {"page": 1, "size": 500, "sort": ["START_DATE_DESC"]},
+        "filter": {
+            "keyword": "", "tagSnList": [], "jobGroupSnList": [],
+            "careerTypeList": [], "regionSnList": [],
+            "submissionStatusList": [], "openStatusList": [],
+            "resumeLanguageTypeList": ["KOR"],
+        },
+    }
+    data = fetch_post_json(
+        "https://api-recruiter.recruiter.co.kr/position/v1/jobflex",
+        payload, {"prefix": hostname},
+    )
+    records = []
+    for item in data.get("list", []):
+        if item.get("submissionStatus") != "IN_SUBMISSION":
+            continue
+        deadline = (item.get("endDateTime") or "")[:10] or None
+        if deadline and deadline < TODAY.isoformat():
+            continue
+        career = {"NEW": "신입", "CAREER": "경력", "NEW_CAREER": "신입/경력"}.get(item.get("careerType"), "경력/신입 공고 상세 확인")
+        records.append({
+            "id": f"jobflex-{item['positionSn']}",
+            "title": item["title"].strip(),
+            "location": "대한민국",
+            "url": f"{base_url}/career/jobs/{item['positionSn']}",
+            "description": f"{item.get('classificationCode') or '채용'} · 공식 채용공고",
+            "experience": career,
+            "employment": "고용형태 확인",
+            "category": item.get("classificationCode"),
+            "deadline": deadline,
+            "posted_at": (item.get("startDateTime") or TODAY.isoformat())[:10],
+        })
+    return records
 
 def map_category(title):
     t = title.lower()
@@ -274,6 +318,15 @@ def sync_source(source_id):
                 base_url = config.get("base_url") or (urlparse(source["endpoint"]).scheme + "://" + urlparse(source["endpoint"]).netloc)
                 detail_url = f"{base_url}/app/jobnotice/view?systemKindCode={item.get('systemKindCode','MRS2')}&jobnoticeSn={item['jobnoticeSn']}"
                 records.append({"id": item["jobnoticeSn"], "title": item["jobnoticeName"].strip(), "location": "대한민국", "url": detail_url, "description": f"{item.get('recruitClassName', '기타')} · {item.get('recruitTypeName', '')}", "experience": "경력/신입 공고 상세 확인", "employment": "고용형태 확인", "category": item.get("recruitClassName"), "deadline": deadline, "posted_at": posted_at})
+            # recruiter.co.kr의 신형 빌더는 구형 list.json과 별도 저장소를
+            # 사용한다. 둘을 병합해야 메인 화면에만 보이던 신규 공고도 잡힌다.
+            # 아직 이전하지 않은 도메인은 신형 API가 400을 반환하므로 무시한다.
+            try:
+                modern = fetch_jobflex_records(config.get("base_url"))
+            except Exception:
+                modern = []
+            known = {str(item["id"]) for item in records}
+            records.extend(item for item in modern if str(item["id"]) not in known)
         elif source["source_type"] == "json_feed" and config.get("adapter") == "kakaobank_recruits":
             data = fetch_post_json(source["endpoint"], {"receiptFilterType":"ONGOING", "pageNumber":1, "pageSize":100})
             records = []
