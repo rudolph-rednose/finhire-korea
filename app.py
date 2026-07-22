@@ -303,6 +303,22 @@ def map_category(title):
     pairs = [("PM/PO", ["product manager", " pm", "po", "프로덕트"]), ("서비스기획", ["기획", "service planning"]), ("개발", ["engineer", "developer", "개발"]), ("데이터", ["data", "데이터", "analyst"]), ("UX/UI", ["ux", "ui", "design", "디자인"]), ("금융/영업", ["rm", "영업", "금융"])]
     return next((name for name, words in pairs if any(w in t for w in words)), "기타")
 
+def normalize_category(raw_category, title):
+    text = f"{raw_category or ''} {title}".lower()
+    groups = [
+        ("기획/PM", ["product", "pm", " po", "기획", "strategy", "전략"]),
+        ("데이터/AI", ["data", "데이터", "analyst", "analysis", " ml", "ai", "r&d"]),
+        ("개발", ["engineer", "developer", "backend", "server", "app", "개발", "engineering"]),
+        ("디자인/UX", ["design", " ux", " ui", "디자인"]),
+        ("보안/IT", ["security", "infra", "device", "it ", "정보보호", "보안", "qa"]),
+        ("금융/투자", ["finance", "bank", "securities", "insurance", "금융", "투자", "자금", "연금", "리스크", "risk", "aml"]),
+        ("영업/고객", ["sales", "customer", "service", "영업", "텔러", "상담", "고객"]),
+        ("마케팅/홍보", ["marketing", "brand", "contents", " pr", "마케팅", "브랜드", "홍보"]),
+        ("경영지원/인사", ["hr", "people", "recruit", "accounting", "경영", "인사", "채용", "총무", "ga"]),
+        ("법무/컴플라이언스", ["legal", "compliance", "법무", "준법"]),
+    ]
+    return next((group for group, words in groups if any(word in text for word in words)), "기타")
+
 def sync_source(source_id):
     con = db(); source = con.execute("""SELECT s.*, c.name company FROM job_sources s JOIN companies c ON c.id=s.company_id WHERE s.id=?""", (source_id,)).fetchone()
     if not source: con.close(); raise ValueError("소스를 찾을 수 없습니다.")
@@ -472,7 +488,8 @@ def sync_source(source_id):
         for item in records:
             title = item["title"]; location = item["location"]; url = item["url"]
             key = canonical(source["company"], title, location)
-            values = (source["company_id"],source_id,str(item["id"]),title,title,item.get("category") or map_category(title),item["experience"],location,item["employment"],item["description"],item.get("deadline"),item.get("posted_at", TODAY.isoformat()),url,key)
+            category = normalize_category(item.get("category"), title)
+            values = (source["company_id"],source_id,str(item["id"]),title,title,category,item["experience"],location,item["employment"],item["description"],item.get("deadline"),item.get("posted_at", TODAY.isoformat()),url,key)
             con.execute("""INSERT OR IGNORE INTO jobs(company_id,source_id,external_id,title,original_title,job_category,experience,location,employment_type,description,deadline,posted_at,source_url,canonical_key,status,last_seen_at)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'open', CURRENT_TIMESTAMP)""",
               values)
@@ -484,7 +501,7 @@ def sync_source(source_id):
                 con.execute("""INSERT OR IGNORE INTO jobs(company_id,source_id,external_id,title,original_title,job_category,experience,location,employment_type,description,deadline,posted_at,source_url,canonical_key,status,last_seen_at)
                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'open', CURRENT_TIMESTAMP)""", values[:-1] + (fallback_key,))
             con.execute("""UPDATE jobs SET title=?,original_title=?,job_category=?,experience=?,location=?,employment_type=?,description=?,deadline=?,posted_at=?,source_url=?,status='open',last_seen_at=CURRENT_TIMESTAMP
-              WHERE source_id=? AND external_id=?""", (title,title,item.get("category") or map_category(title),item["experience"],location,item["employment"],item["description"],item.get("deadline"),item.get("posted_at", TODAY.isoformat()),url,source_id,str(item["id"])))
+              WHERE source_id=? AND external_id=?""", (title,title,category,item["experience"],location,item["employment"],item["description"],item.get("deadline"),item.get("posted_at", TODAY.isoformat()),url,source_id,str(item["id"])))
             count += 1
         external_ids = [str(item["id"]) for item in records]
         if external_ids:
@@ -546,9 +563,17 @@ def job_where(qs):
     clauses=["j.status='open'", "(j.deadline IS NULL OR j.deadline >= date('now'))"]; values=[]
     keyword=qs.get("q",[""])[0].strip()
     if keyword: clauses.append("(j.title LIKE ? OR c.name LIKE ? OR j.description LIKE ?)"); values += [f"%{keyword}%"]*3
-    for key,column in [("company","c.name"),("category","j.job_category"),("location","j.location"),("employment","j.employment_type")]:
+    for key,column in [("company","c.name"),("category","j.job_category"),("employment","j.employment_type")]:
         vals=qs.get(key,[])
-        if vals: clauses.append("("+" OR ".join([column+" LIKE ?"]*len(vals))+")"); values += [f"%{v}%" for v in vals]
+        if vals: clauses.append("("+" OR ".join([column+" = ?"]*len(vals))+")"); values += vals
+    location_parts=[]
+    for value in qs.get("location",[]):
+        if value == "서울": location_parts.append("(j.location LIKE '%서울%' OR lower(j.location) LIKE '%seoul%')")
+        elif value == "부산": location_parts.append("(j.location LIKE '%부산%' OR lower(j.location) LIKE '%busan%')")
+        elif value == "경기": location_parts.append("j.location LIKE '%경기%'")
+        elif value == "전국/기타": location_parts.append("j.location IN ('대한민국','미정')")
+        elif value == "해외": location_parts.append("j.location NOT LIKE '%서울%' AND lower(j.location) NOT LIKE '%seoul%' AND j.location NOT LIKE '%경기%' AND j.location NOT LIKE '%부산%' AND lower(j.location) NOT LIKE '%busan%' AND j.location NOT IN ('대한민국','미정')")
+    if location_parts: clauses.append("(" + " OR ".join(f"({part})" for part in location_parts) + ")")
     if qs.get("new")==["1"]: clauses.append("j.posted_at >= date('now','-3 day')")
     if qs.get("deadline")==["7"]: clauses.append("j.deadline <= date('now','+7 day')")
     return " AND ".join(clauses),values
@@ -577,8 +602,19 @@ def home(qs, favorites_only=False):
     company_rows=con.execute("""SELECT c.name,c.website,
         COALESCE((SELECT s.name FROM job_sources s WHERE s.company_id=c.id AND s.enabled=1 ORDER BY s.id LIMIT 1),'공식 채용 페이지') source_name
         FROM companies c ORDER BY c.name""").fetchall()
-    companies=[r['name'] for r in company_rows]; con.close()
-    cat=["PM/PO","서비스기획","개발","데이터","UX/UI","금융/영업"]; loc=["서울","경기","부산"]; emp=["정규직","계약직","인턴"]
+    companies=[r['name'] for r in company_rows]
+    active_condition = "status='open' AND (deadline IS NULL OR deadline >= date('now'))"
+    cat=[r[0] for r in con.execute(f"SELECT DISTINCT job_category FROM jobs WHERE {active_condition} ORDER BY job_category")]
+    emp=[r[0] for r in con.execute(f"SELECT DISTINCT employment_type FROM jobs WHERE {active_condition} ORDER BY employment_type")]
+    raw_locations=[(r[0] or '').lower() for r in con.execute(f"SELECT DISTINCT location FROM jobs WHERE {active_condition}")]
+    loc=[]
+    if any('서울' in value or 'seoul' in value for value in raw_locations): loc.append('서울')
+    if any('경기' in value for value in raw_locations): loc.append('경기')
+    if any('부산' in value or 'busan' in value for value in raw_locations): loc.append('부산')
+    if any(value in ('대한민국','미정') for value in raw_locations): loc.append('전국/기타')
+    known = lambda value: ('서울' in value or 'seoul' in value or '경기' in value or '부산' in value or 'busan' in value or value in ('대한민국','미정'))
+    if any(not known(value) for value in raw_locations): loc.append('해외')
+    con.close()
     filters=''.join(checkbox('company',x,x,qs) for x in companies)+ '<div class="filter-title">직무</div>'+''.join(checkbox('category',x,x,qs) for x in cat)+ '<div class="filter-title">지역</div>'+''.join(checkbox('location',x,x,qs) for x in loc)+ '<div class="filter-title">고용형태</div>'+''.join(checkbox('employment',x,x,qs) for x in emp)+ '<div class="filter-title">공고 상태</div>'+checkbox('new','1','최근 3일 신규',qs)+checkbox('deadline','7','7일 내 마감',qs)
     path = '/favorites' if favorites_only else '/'
     current_path = path + (('?' + urlencode(qs, doseq=True)) if qs else '')

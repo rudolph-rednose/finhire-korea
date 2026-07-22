@@ -20,6 +20,16 @@ class JobflexFeedTests(unittest.TestCase):
         self.assertEqual("https://example.recruiter.co.kr/career/jobs/1", rows[0]["url"])
         self.assertEqual("example.recruiter.co.kr", post.call_args.args[2]["prefix"])
 
+    def test_job_categories_are_normalized_for_filters(self):
+        self.assertEqual("기획/PM", app.normalize_category("Product Ownership", "Product Owner"))
+        self.assertEqual("데이터/AI", app.normalize_category("ML", "AI Engineer"))
+        self.assertEqual("영업/고객", app.normalize_category(None, "영업점 텔러"))
+
+    def test_location_filter_combines_korean_and_english_seoul(self):
+        where, values = app.job_where({"location": ["서울"]})
+        self.assertIn("lower(j.location) LIKE '%seoul%'", where)
+        self.assertEqual([], values)
+
 
 if __name__ == "__main__":
     unittest.main()
