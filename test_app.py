@@ -32,6 +32,7 @@ class JobflexFeedTests(unittest.TestCase):
 
     def test_favorites_cards_are_hidden_before_local_storage_loads(self):
         page = app.home({}, favorites_only=True)
+        self.assertIn('[hidden]{display:none!important}', page)
         self.assertIn('id="result-heading">관심 공고 0개', page)
         self.assertGreater(page.count('<article class="card"'), 0)
         self.assertEqual(page.count('<article class="card"'), page.count(' hidden><div class="card-head">'))
