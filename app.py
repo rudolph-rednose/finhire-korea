@@ -325,8 +325,11 @@ def sync_source(source_id):
                 modern = fetch_jobflex_records(config.get("base_url"))
             except Exception:
                 modern = []
-            known = {str(item["id"]) for item in records}
-            records.extend(item for item in modern if str(item["id"]) not in known)
+            known_ids = {str(item["id"]) for item in records}
+            known_titles = {re.sub(r"[^a-z0-9가-힣]", "", item["title"].lower()) for item in records}
+            records.extend(item for item in modern
+                           if str(item["id"]) not in known_ids
+                           and re.sub(r"[^a-z0-9가-힣]", "", item["title"].lower()) not in known_titles)
         elif source["source_type"] == "json_feed" and config.get("adapter") == "kakaobank_recruits":
             data = fetch_post_json(source["endpoint"], {"receiptFilterType":"ONGOING", "pageNumber":1, "pageSize":100})
             records = []
