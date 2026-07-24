@@ -2,8 +2,13 @@ name: Daily job sync
 
 on:
   schedule:
-    - cron: "0 3 * * *"
+    # GitHub의 매시 정각 예약 지연을 피하기 위해 KST 11:55에 등록한다.
+    - cron: "55 2 * * *"
   workflow_dispatch:
+
+concurrency:
+  group: daily-job-sync
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -11,17 +16,20 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: Asia/Seoul
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Sync official job sources
-        run: python app.py sync
+        run: python app.py sync --allow-partial
       - name: Commit updated job snapshot
         run: |
           git config user.name "finhire-sync-bot"
           git config user.email "actions@users.noreply.github.com"
           git add finhire.db
-          git diff --cached --quiet || git commit -m "chore: daily job sync"
+          git diff --cached --quiet || git commit -m "chore: daily job sync $(date +%F)"
           git push

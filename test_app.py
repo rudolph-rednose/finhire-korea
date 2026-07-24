@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import app
 
@@ -42,6 +42,18 @@ class JobflexFeedTests(unittest.TestCase):
         self.assertIn('id="result-heading">관심 공고 0개', page)
         self.assertGreater(page.count('<article class="card"'), 0)
         self.assertEqual(page.count('<article class="card"'), page.count(' hidden><div class="card-head">'))
+
+    @patch("app.time.sleep")
+    @patch("app.sync_source")
+    @patch("app.db")
+    def test_scheduled_sync_keeps_successes_after_retries(self, database, sync, _sleep):
+        connection = MagicMock()
+        connection.execute.return_value = [(1,), (2,)]
+        database.return_value = connection
+        sync.side_effect = [3, TimeoutError("temporary"), TimeoutError("temporary"), TimeoutError("temporary")]
+        failures = app.run_sync(allow_partial=True, attempts=3)
+        self.assertEqual([(2, "temporary")], failures)
+        self.assertEqual(4, sync.call_count)
 
 
 if __name__ == "__main__":

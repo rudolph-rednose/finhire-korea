@@ -10,6 +10,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 import urllib.request
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -709,20 +710,32 @@ class App(BaseHTTPRequestHandler):
         else:self.respond("Not found",404);return
         self.send_response(303); self.send_header("Location","/admin?"+urlencode({'message':msg})); self.end_headers()
 
-def run_sync():
+def run_sync(allow_partial=False, attempts=3):
     con=db(); ids=[x[0] for x in con.execute("SELECT id FROM job_sources WHERE enabled=1")]; con.close()
     failures=[]
     for i in ids:
-        try: print(f"source {i}: {sync_source(i)} jobs")
-        except Exception as e:
-            failures.append((i, str(e)))
-            print(f"source {i}: failed: {e}")
-    if failures:
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            try:
+                print(f"source {i}: {sync_source(i)} jobs", flush=True)
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                print(f"source {i}: attempt {attempt}/{attempts} failed: {e}", flush=True)
+                if attempt < attempts:
+                    time.sleep(attempt * 2)
+        if last_error is not None:
+            failures.append((i, str(last_error)))
+    if failures and (not allow_partial or len(failures) == len(ids)):
         raise RuntimeError(f"전체 동기화 검증 실패: {len(failures)}개 소스")
+    if failures:
+        print(f"부분 동기화 완료: {len(ids) - len(failures)}개 성공, {len(failures)}개 실패(다음 실행에서 재시도)", flush=True)
+    return failures
 
 if __name__ == '__main__':
-    parser=argparse.ArgumentParser(); parser.add_argument('command',nargs='?',default='serve',choices=['serve','sync']); parser.add_argument('--port',type=int,default=8000); args=parser.parse_args(); init_db()
-    if args.command=='sync':run_sync()
+    parser=argparse.ArgumentParser(); parser.add_argument('command',nargs='?',default='serve',choices=['serve','sync']); parser.add_argument('--port',type=int,default=8000); parser.add_argument('--allow-partial',action='store_true',help='성공한 소스는 보존하고 실패한 소스는 다음 실행에서 재시도'); args=parser.parse_args(); init_db()
+    if args.command=='sync':run_sync(allow_partial=args.allow_partial)
     else:
         print(f"FinHire Korea is running at http://127.0.0.1:{args.port}")
         ThreadingHTTPServer(('127.0.0.1',args.port),App).serve_forever()
