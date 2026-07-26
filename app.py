@@ -556,6 +556,15 @@ body{padding-bottom:78px}.card{position:relative}.card-link{display:block}.card-
 
 CLIENT_JS = '''<script>
 document.addEventListener('DOMContentLoaded',()=>{
+  const filterScrollKey='finhire-filter-scroll';
+  const rememberFilterScroll=()=>{try{sessionStorage.setItem(filterScrollKey,String(window.scrollY))}catch(_){}};
+  window.submitFilters=form=>{rememberFilterScroll();form.submit()};
+  const filterForm=document.getElementById('filters-panel');
+  if(filterForm)filterForm.addEventListener('submit',rememberFilterScroll);
+  try{
+    const previousScroll=sessionStorage.getItem(filterScrollKey);
+    if(previousScroll!==null){sessionStorage.removeItem(filterScrollKey);requestAnimationFrame(()=>window.scrollTo(0,Number(previousScroll)||0));}
+  }catch(_){}
   const key='finhire-favorites';
   let saved=new Set(JSON.parse(localStorage.getItem(key)||'[]').map(String));
   const persist=()=>localStorage.setItem(key,JSON.stringify([...saved]));
@@ -605,7 +614,7 @@ def job_where(qs):
 
 def checkbox(name, value, label, qs):
     checked = " checked" if value in qs.get(name,[]) else ""
-    return f'<label><input type="checkbox" name="{name}" value="{html.escape(value)}"{checked} onchange="if(!window.matchMedia(\'(max-width:720px)\').matches)this.form.submit()">{html.escape(label)}</label>'
+    return f'<label><input type="checkbox" name="{name}" value="{html.escape(value)}"{checked} onchange="if(!window.matchMedia(\'(max-width:720px)\').matches)submitFilters(this.form)">{html.escape(label)}</label>'
 
 def bottom_nav(active, favorite_count):
     return f'''<nav class="bottom-nav" aria-label="공고 목록 전환"><a class="bottom-tab{' active' if active=='all' else ''}" href="/"><span>전체</span></a><a class="bottom-tab{' active' if active=='favorites' else ''}" href="/favorites"><span>관심</span><span class="bottom-badge">{favorite_count}</span></a></nav>'''

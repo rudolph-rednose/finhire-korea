@@ -36,6 +36,12 @@ class JobflexFeedTests(unittest.TestCase):
         self.assertIn("lower(j.location) LIKE '%seoul%'", where)
         self.assertEqual([], values)
 
+    def test_filter_submission_preserves_scroll_position(self):
+        page = app.home({})
+        self.assertIn("sessionStorage.setItem(filterScrollKey,String(window.scrollY))", page)
+        self.assertIn("submitFilters(this.form)", page)
+        self.assertIn("window.scrollTo(0,Number(previousScroll)||0)", page)
+
     def test_favorites_cards_are_hidden_before_local_storage_loads(self):
         page = app.home({}, favorites_only=True)
         self.assertIn('[hidden]{display:none!important}', page)
