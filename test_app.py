@@ -42,6 +42,13 @@ class JobflexFeedTests(unittest.TestCase):
         self.assertIn("submitFilters(this.form)", page)
         self.assertIn("window.scrollTo(0,Number(previousScroll)||0)", page)
 
+    def test_multiple_filter_presets_can_be_saved_and_removed(self):
+        page = app.home({"company": ["하나은행"], "category": ["데이터/AI"]})
+        self.assertIn('id="save-current-filter"', page)
+        self.assertIn("finhire-saved-filters", page)
+        self.assertIn("presets.slice(0,20)", page)
+        self.assertIn("filter(item=>item.id!==preset.id)", page)
+
     def test_favorites_cards_are_hidden_before_local_storage_loads(self):
         page = app.home({}, favorites_only=True)
         self.assertIn('[hidden]{display:none!important}', page)

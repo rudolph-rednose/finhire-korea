@@ -554,6 +554,10 @@ body{padding-bottom:78px}.card{position:relative}.card-link{display:block}.card-
 @media(max-width:720px){.card-head{display:flex}.card-actions{align-self:flex-start}.due{margin-top:0}.bottom-nav{width:100%;border-left:0;border-right:0;border-radius:16px 16px 0 0}}
 </style>'''
 
+CSS += '''<style>
+.saved-filter-panel{margin:0 0 18px;padding:13px;border:1px solid #dfe5f2;border-radius:10px;background:#f8faff}.saved-filter-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:800}.saved-filter-add{border:0;border-radius:7px;background:#e7edff;color:#294fc4;padding:7px 9px;font-size:12px;font-weight:800;cursor:pointer}.saved-filter-list{display:grid;gap:7px;margin-top:10px}.saved-filter-empty{color:#7a8498;font-size:12px}.saved-filter-item{display:flex;align-items:center;gap:7px}.saved-filter-link{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:8px 9px;border-radius:7px;background:#fff;color:#31405c;font-size:13px;font-weight:700}.saved-filter-link:hover{background:#edf2ff;color:#294fc4}.saved-filter-delete{flex:0 0 auto;width:30px;height:30px;border:0;border-radius:7px;background:#fff;color:#8a94a7;cursor:pointer}.saved-filter-delete:hover{background:#fff0f2;color:#d83d5b}@media(max-width:720px){.saved-filter-panel{grid-column:1/-1}}
+</style>'''
+
 CLIENT_JS = '''<script>
 document.addEventListener('DOMContentLoaded',()=>{
   const filterScrollKey='finhire-filter-scroll';
@@ -565,6 +569,36 @@ document.addEventListener('DOMContentLoaded',()=>{
     const previousScroll=sessionStorage.getItem(filterScrollKey);
     if(previousScroll!==null){sessionStorage.removeItem(filterScrollKey);requestAnimationFrame(()=>window.scrollTo(0,Number(previousScroll)||0));}
   }catch(_){}
+  const presetKey='finhire-saved-filters';
+  const presetList=document.getElementById('saved-filter-list');
+  const readPresets=()=>{try{return JSON.parse(localStorage.getItem(presetKey)||'[]')}catch(_){return[]}};
+  const writePresets=items=>localStorage.setItem(presetKey,JSON.stringify(items));
+  const renderPresets=()=>{
+    if(!presetList)return;
+    presetList.replaceChildren();
+    const presets=readPresets();
+    if(!presets.length){const empty=document.createElement('div');empty.className='saved-filter-empty';empty.textContent='저장한 필터가 없습니다.';presetList.append(empty);return;}
+    presets.forEach(preset=>{
+      const row=document.createElement('div');row.className='saved-filter-item';
+      const link=document.createElement('a');link.className='saved-filter-link';link.href='/?'+preset.query;link.textContent=preset.name;link.title=preset.name;
+      const remove=document.createElement('button');remove.type='button';remove.className='saved-filter-delete';remove.textContent='×';remove.setAttribute('aria-label',preset.name+' 삭제');
+      remove.addEventListener('click',()=>{writePresets(readPresets().filter(item=>item.id!==preset.id));renderPresets()});
+      row.append(link,remove);presetList.append(row);
+    });
+  };
+  const addPreset=document.getElementById('save-current-filter');
+  if(addPreset)addPreset.addEventListener('click',()=>{
+    const params=new URLSearchParams(new FormData(filterForm));
+    [...params.keys()].forEach(name=>{if(!params.get(name))params.delete(name)});
+    if(![...params.keys()].length){alert('저장할 필터를 먼저 선택해 주세요.');return;}
+    const companies=params.getAll('company'),categories=params.getAll('category');
+    const suggested=[...companies.slice(0,2),...categories.slice(0,2)].join(' · ')||'내 필터';
+    const name=prompt('저장할 필터 이름을 입력해 주세요.',suggested);
+    if(!name||!name.trim())return;
+    const presets=readPresets();presets.unshift({id:String(Date.now()),name:name.trim(),query:params.toString(),savedAt:new Date().toISOString()});
+    writePresets(presets.slice(0,20));renderPresets();
+  });
+  renderPresets();
   const key='finhire-favorites';
   let saved=new Set(JSON.parse(localStorage.getItem(key)||'[]').map(String));
   const persist=()=>localStorage.setItem(key,JSON.stringify([...saved]));
@@ -671,7 +705,7 @@ def home(qs, favorites_only=False):
     filter_count_html = f'<span class="filter-count">{filter_count}</span>' if filter_count else ''
     heading = '관심 공고' if favorites_only else '공식 채용공고'
     initial_count = 0 if favorites_only else len(rows)
-    return layout('관심 공고' if favorites_only else '금융권 자사채용 통합검색',f'''<section class="hero"><div class="wrap"><h1>{'저장한 관심 공고를<br>한곳에서 확인하세요.' if favorites_only else '한국 금융권 공식 채용공고를<br>한곳에서 찾아보세요.'}</h1><p>은행 · 증권 · 카드 · 보험 · 저축은행 · 핀테크</p><form class="search" action="{path}"><input name="q" value="{query}" placeholder="기업명, 직무, 기술로 검색"><button class="btn">검색</button></form></div></section><main class="wrap content"><form class="filters" id="filters-panel" method="get"><div class="mobile-filter-head"><span>필터</span><button class="filter-close" type="button" aria-label="필터 닫기" onclick="document.getElementById('filter-toggle').click()">×</button></div><input type="hidden" name="q" value="{query}"><div class="filter-title">기업</div>{filters}<button class="btn filter-apply" style="margin-top:16px;width:100%">필터 적용</button>{f'<a class="muted" style="display:block;text-align:center;margin-top:13px" href="{path}">필터 초기화</a>' if active else ''}</form><section><div class="toolbar"><b id="result-heading">{heading} {initial_count}개</b><span class="muted toolbar-meta">마감 임박순 · 공식 지원 페이지로 연결됩니다</span><button class="filter-toggle" id="filter-toggle" type="button" aria-expanded="false" aria-controls="filters-panel" onclick="const p=document.getElementById('filters-panel'),o=p.classList.toggle('open');this.setAttribute('aria-expanded',o);document.body.style.overflow=o?'hidden':''"><span class="filter-toggle-label">필터</span>{filter_count_html}<span aria-hidden="true">⌄</span></button></div>{cards}</section></main>{bottom_nav('favorites' if favorites_only else 'all', favorite_count)}''')
+    return layout('관심 공고' if favorites_only else '금융권 자사채용 통합검색',f'''<section class="hero"><div class="wrap"><h1>{'저장한 관심 공고를<br>한곳에서 확인하세요.' if favorites_only else '한국 금융권 공식 채용공고를<br>한곳에서 찾아보세요.'}</h1><p>은행 · 증권 · 카드 · 보험 · 저축은행 · 핀테크</p><form class="search" action="{path}"><input name="q" value="{query}" placeholder="기업명, 직무, 기술로 검색"><button class="btn">검색</button></form></div></section><main class="wrap content"><form class="filters" id="filters-panel" method="get"><div class="mobile-filter-head"><span>필터</span><button class="filter-close" type="button" aria-label="필터 닫기" onclick="document.getElementById('filter-toggle').click()">×</button></div><input type="hidden" name="q" value="{query}"><section class="saved-filter-panel" aria-label="저장한 필터"><div class="saved-filter-head"><span>저장한 필터</span><button class="saved-filter-add" id="save-current-filter" type="button">+ 현재 조건 저장</button></div><div class="saved-filter-list" id="saved-filter-list"></div></section><div class="filter-title">기업</div>{filters}<button class="btn filter-apply" style="margin-top:16px;width:100%">필터 적용</button>{f'<a class="muted" style="display:block;text-align:center;margin-top:13px" href="{path}">필터 초기화</a>' if active else ''}</form><section><div class="toolbar"><b id="result-heading">{heading} {initial_count}개</b><span class="muted toolbar-meta">마감 임박순 · 공식 지원 페이지로 연결됩니다</span><button class="filter-toggle" id="filter-toggle" type="button" aria-expanded="false" aria-controls="filters-panel" onclick="const p=document.getElementById('filters-panel'),o=p.classList.toggle('open');this.setAttribute('aria-expanded',o);document.body.style.overflow=o?'hidden':''"><span class="filter-toggle-label">필터</span>{filter_count_html}<span aria-hidden="true">⌄</span></button></div>{cards}</section></main>{bottom_nav('favorites' if favorites_only else 'all', favorite_count)}''')
 
 def detail(job_id):
     con=db(); r=con.execute("SELECT j.*,c.name company,c.industry,EXISTS(SELECT 1 FROM favorites f WHERE f.job_id=j.id) is_favorite FROM jobs j JOIN companies c ON c.id=j.company_id WHERE j.id=?",(job_id,)).fetchone(); favorite_count=con.execute("SELECT COUNT(*) FROM favorites").fetchone()[0]; con.close()
